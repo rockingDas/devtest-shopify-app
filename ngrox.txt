@@ -1,0 +1,24 @@
+ngrok http --url=lizard-correct-uniquely.ngrok-free.app 80
+
+
+
+
+
+https://admin.shopify.com/oauth/install_custom_app?client_id=71628ba3abcb967ba2044217caa4a7a0&no_redirect=true&signature=eyJleHBpcmVzX2F0IjoxNzU5MDU5NDI4LCJwZXJtYW5lbnRfZG9tYWluIjoidmFzdHJ1d29vZC5teXNob3BpZnkuY29tIiwiY2xpZW50X2lkIjoiNzE2MjhiYTNhYmNiOTY3YmEyMDQ0MjE3Y2FhNGE3YTAiLCJwdXJwb3NlIjoiY3VzdG9tX2FwcCIsIm1lcmNoYW50X29yZ2FuaXphdGlvbl9pZCI6MTY3Njk0NTcxfQ%3D%3D--1b28c789f60eb8e7c7ca4eebb5f358a3375a5caf
+
+https://lizard-correct-uniquely.ngrok-free.app
+
+
+RewriteEngine On
+RewriteBase /
+
+# /settings → setting.php
+RewriteRule ^settings$ setting.php [L]
+
+# /templates → template.php
+RewriteRule ^templates$ template.php [L]
+
+# default to index.php if no file/folder is found
+RewriteCond %{REQUEST_FILENAME} !-f
+RewriteCond %{REQUEST_FILENAME} !-d
+RewriteRule . index.php [L]
