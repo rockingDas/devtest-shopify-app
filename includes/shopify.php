@@ -533,38 +533,100 @@
           'product' => $response,
           'variants_updated' => [],
           'variants_created' => [],
-          'variants_deleted' => []
+          'variants_deleted' => [],
+          'images_uploaded' => []
+          
       ];
   
       $product_gid = $response['data']['productCreate']['product']['id'] ?? null;
       if ($product_gid) {
-          $productId = preg_replace('/\D/', '', $product_gid);
-          $createdVariants = $response['data']['productCreate']['product']['variants']['edges'] ?? [];
+        $productId = preg_replace('/\D/', '', $product_gid);
+        $createdVariants = $response['data']['productCreate']['product']['variants']['edges'] ?? [];
+        
+        if ($isSimpleProduct) {
+          // SIMPLE PRODUCT: Update the default variant
+          if (!empty($createdVariants)) {
+            $variantId = preg_replace('/\D/', '', $createdVariants[0]['node']['id']);
+            $updateResponse = $this->updateVariantREST($variantId, $productData['variants'][0], $shop_url, $access_token);
+            $results['variants_updated'][] = $updateResponse;
+            
+            // Upload images for simple product
+            if (!empty($productData['variants'][0]['image_url'])) {
+                foreach ($productData['variants'][0]['image_url'] as $imageUrl) {
+                    $imgResponse = $this->uploadVariantImages($productId, $variantId, $imageUrl, $shop_url, $access_token);
+                    $results['images_uploaded'][] = $imgResponse;
+                }
+            }
+          }
+        }else{
+          // VARIANT PRODUCT: Reuse default variant for first variant
           
-          if ($isSimpleProduct) {
-              // SIMPLE PRODUCT: Update the default variant
-              $variantId = preg_replace('/\D/', '', $createdVariants[0]['node']['id'] ?? '');
-              if ($variantId) {
-                  $results['variants_updated'][] = $this->updateVariantREST($variantId, $productData['variants'][0], $shop_url, $access_token);
-              }
-          } else {
-              // VARIANT PRODUCT: Delete all auto-created variants, then create yours
-              $results['variants_deleted'][] = $this->deleteAllVariants($productId, $shop_url, $access_token);
+          // Update first (default) variant with first variant data
+          if (!empty($createdVariants) && !empty($productData['variants'])) {
+            $defaultVariantId = preg_replace('/\D/', '', $createdVariants[0]['node']['id']);
+            $firstVariantData = $productData['variants'][0];
+            
+            // Skip if first variant is "Default Title"
+            if ($firstVariantData['title'] !== 'Default Title' && $firstVariantData['option1'] !== 'Default Title') {
+              $updateResponse = $this->updateVariantREST($defaultVariantId, $firstVariantData, $shop_url, $access_token);
+              $results['variants_updated'][] = $updateResponse;
               
-              // Wait a moment for deletion to complete
-              sleep(1);
-              
-              // Create all custom variants
-              foreach ($productData['variants'] as $variantData) {
-                  $createResponse = $this->createVariantREST($productId, $variantData, $shop_url, $access_token);
-                  $results['variants_created'][] = $createResponse;
-                  
-                  // If variant created successfully, update inventory
-                  if (isset($createResponse['body']['variant']['id'])) {
-                    $results['variants_updated'][] = $this->updateVariantInventory($createResponse['body']['variant']['inventory_item_id'], $variantData['inventory_quantity'], $shop_url, $access_token);
+              // Update inventory for first variant
+              if ($firstVariantData['inventory_quantity'] > 0) {
+                  $inventoryItemId = $createdVariants[0]['node']['inventory_item_id'] ?? null;
+                  if ($inventoryItemId) {
+                    $updateResponse = $this->updateVariantInventory($inventoryItemId, $firstVariantData['inventory_quantity'], $shop_url, $access_token);
+                    $results['variants_updated'][1] = $updateResponse;
                   }
               }
+              
+              // Upload images for first variant
+              if (!empty($firstVariantData['image_url'])) {
+                  // foreach ($firstVariantData['image_url'] as $imageUrl) {
+                      $imgResponse = $this->uploadVariantImages($productId, $defaultVariantId, $firstVariantData['image_url'], $shop_url, $access_token);
+                      $results['images_uploaded'][] = $imgResponse;
+                  // }
+              }
+            }
           }
+          
+          // Create remaining variants (starting from second variant)
+          if (count($productData['variants']) > 1) {
+            foreach (array_slice($productData['variants'], 1) as $variantData) {
+              $i = 2;
+              // Skip "Default Title" variants
+              if ($variantData['title'] === 'Default Title' || $variantData['option1'] === 'Default Title') {
+                  continue;
+              }
+              
+              $createResponse = $this->createVariantREST($productId, $variantData, $shop_url, $access_token);
+              
+              if (isset($createResponse['body']['variant'])) {
+                $results['variants_created'][] = $createResponse;
+                
+                $variantId = $createResponse['body']['variant']['id'];
+                $inventoryItemId = $createResponse['body']['variant']['inventory_item_id'];
+                
+                // Update inventory
+                if ($variantData['inventory_quantity'] > 0) {
+                  $updateResponse = $this->updateVariantInventory($inventoryItemId, $variantData['inventory_quantity'], $shop_url, $access_token);
+                  $results['variants_updated'][$i++] = $updateResponse;
+                }
+                
+                // Upload variant-specific images
+                if (!empty($variantData['image_url']) && is_array($variantData['image_url'])) {
+                    // foreach ($variantData['image_url'] as $imageUrl) {
+                        $imgResponse = $this->uploadVariantImages($productId, $variantId, $variantData['image_url'], $shop_url, $access_token);
+                        $results['images_uploaded'][] = $imgResponse;
+                    // }
+                }
+              } else {
+                  $results['variants_created'][] = ['error' => $createResponse];
+              }
+            }
+          }
+        }
+
       }
   
       // Publish to channels
@@ -681,22 +743,25 @@
     }
     
     private function uploadVariantImages($productId, $variantId, $imageUrls, $shop_url, $access_token) {
-        foreach ($imageUrls as $imageUrl) {
-            $data = [
-                "image" => [
-                    "src" => $imageUrl,
-                    "variant_ids" => [(int)$variantId]
-                ]
-            ];
-            
-            $this->rest_api(
-                "/admin/api/" . API_VERSION . "/products/{$productId}/images.json",
-                $data,
-                'POST',
-                $shop_url,
-                $access_token
-            );
-        }
+      $responses = [];
+      foreach ($imageUrls as $imageUrl) {
+        $data = [
+            "image" => [
+                "src" => $imageUrl,
+                "variant_ids" => [(int)$variantId]
+            ]
+        ];
+        
+        $imgResponse = $this->rest_api(
+            "/admin/api/" . API_VERSION . "/products/{$productId}/images.json",
+            $data,
+            'POST',
+            $shop_url,
+            $access_token
+        );
+        $responses[] = $imgResponse;
+      }
+      return ['responses' => $responses];
     }
     
     private function handleVariants($product_gid, $existingVariants, $newVariants, $shop_url, $access_token) {
@@ -756,9 +821,9 @@
       );
       
       // Upload variant images
-      if (!empty($variantData['image_url']) && isset($response['body']['variant']['id'])) {
-          $this->uploadVariantImages($productId, $response['body']['variant']['id'], $variantData['image_url'], $shop_url, $access_token);
-      }
+      // if (!empty($variantData['image_url']) && isset($response['body']['variant']['id'])) {
+      //     $this->uploadVariantImages($productId, $response['body']['variant']['id'], $variantData['image_url'], $shop_url, $access_token);
+      // }
       
       return $response;
     }
