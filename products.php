@@ -124,36 +124,6 @@
     <section>
         <div class="card">
 
-            <!-- <ui-modal id="my-modal">
-                <ui-title-bar title="Create a Product">
-                <button variant="primary" onclick="submitProductForm()">Create</button>
-                <button onclick="document.getElementById('my-modal').hide()">Cancel</button>
-                </ui-title-bar>
-
-                <form id="productForm" style="padding: 20px;">
-                <label>
-                    Product Title:<br>
-                    <input type="text" id="productTitle" required>
-                </label>
-                <br><br>
-                <label>
-                    Product Description:<br>
-                    <textarea id="productDescription" rows="3"></textarea>
-                </label>
-                <br><br>
-                <label>
-                    Price:<br>
-                    <input type="number" id="productPrice" step="0.01" required>
-                </label>
-                <br><br>
-                <label>
-                    SKU:<br>
-                    <input type="text" id="productSKU">
-                </label>
-                </form>
-            </ui-modal>
-            <button onclick="shopify.modal.show('my-modal')">Create Product</button> -->
-
             <button id="openModalBtn">Create Product</button>
 
             <div id="customModal" class="modal">
@@ -162,30 +132,6 @@
                     Create New Product
                     <span class="close-btn remove-variant-btn" style="text-align: center;">&times;</span>
                     </div>
-
-                    <!-- <form id="productForm" style="padding: 10px;">
-                        <label>
-                            Product Title:<br>
-                            <input type="text" id="productTitle" required>
-                        </label>
-                        <br><br>
-                        <label>
-                            Product Description:<br>
-                            <textarea id="productDescription" rows="3"></textarea>
-                        </label>
-                        <br><br>
-                        <label>
-                            Price:<br>
-                            <input type="number" id="productPrice" step="0.01" required>
-                        </label>
-                        <br><br>
-                        <label>
-                            SKU:<br>
-                            <input type="text" id="productSKU">
-                        </label>
-                        <br><br>
-                        <button type="submit" id="submitBtn">Submit</button>
-                    </form> -->
 
                     <form id="productForm">
                         <!-- Basic Information -->
@@ -630,34 +576,6 @@
                 removeImage(url);
             });
 
-            // Variants functionality
-            // const variantsContainer = document.getElementById('variantsContainer');
-            // const addVariantBtn = document.getElementById('addVariantBtn');
-            // addVariantBtn.addEventListener('click', () => {
-            //     const variantRow = document.createElement('div');
-            //     variantRow.className = 'variant-row';
-            //     variantRow.innerHTML = `
-            //         <div class="form-group">
-            //             <label>Variant Title</label>
-            //             <input type="text" class="variant-title" placeholder="e.g., Medium / Blue">
-            //         </div>
-            //         <div class="form-group">
-            //             <label>Price *</label>
-            //             <input type="number" class="variant-price" step="0.01" required>
-            //         </div>
-            //         <div class="form-group">
-            //             <label>SKU</label>
-            //             <input type="text" class="variant-sku">
-            //         </div>
-            //         <div class="form-group">
-            //             <label>Inventory</label>
-            //             <input type="number" class="variant-inventory" value="0">
-            //         </div>
-            //         <button type="button" class="remove-variant-btn" onclick="this.parentElement.remove()">X</button>
-            //     `;
-            //     variantsContainer.appendChild(variantRow);
-            // });
-
             let optionCount = 1;
             const maxOptions = 3;
             
@@ -851,42 +769,7 @@
                 $('#customModal').fadeOut();
             });
 
-            // Handle form submission
-            // $('#productForm').on('submit', function(e) {
-            //     e.preventDefault();
 
-            //     const title = $('#productTitle').val().trim();
-            //     const description = $('#productDescription').val().trim();
-            //     const price = $('#productPrice').val().trim();
-            //     const sku = $('#productSKU').val().trim();
-            //     const shop_url = "<?= $shopify->get_url() ?>";
-            //     const shop_token = "<?= $shopify->get_token() ?>";
-
-            //     if (!title || !price) {
-            //         alert('Title and Price are required!');
-            //         return;
-            //     }
-
-            //     // console.log('Form Data:', { title, description, price, sku });
-
-            //     // Example AJAX call to ajax.php
-            //     $.ajax({
-            //     url: 'ajax/createProduct.php',
-            //     type: 'POST',
-            //     data: { title, description, price, sku, shop_url, shop_token },
-            //     success: function(response) {
-            //         console.log('Server Response:', response);
-            //         alert('Product created successfully!');
-            //         console.log(response);
-            //         // $('#customModal').fadeOut();
-            //         // $('#productForm')[0].reset();
-            //     },
-            //     error: function(err) {
-            //         console.error('Error:', err);
-            //         alert('Something went wrong.');
-            //     }
-            //     });
-            // });
 
             // Form submission
             document.getElementById('productForm').addEventListener('submit', async (e) => {
@@ -930,10 +813,10 @@
                 } else {
                     // Simple product
                     variants = [{
-                        title: 'Default Title',
-                        price: $('#simplePrice').val(),
-                        sku: $('#simpleSKU').val() || '',
-                        inventory_quantity: parseInt($('#simpleInventory').val()) || 0,
+                        title: document.getElementById('productTitle').value,
+                        price: $('#basePrice').val(),
+                        sku: $('#baseSKU').val() || '',
+                        inventory_quantity: parseInt($('#baseInventory').val()) || 0,
                         option1: 'Default Title'
                     }];
                 }
@@ -1021,4 +904,136 @@
 
 <?php
     include_once("includes/footer.php");
+
+    /*
+    <!-- <ui-modal id="my-modal">
+    <ui-title-bar title="Create a Product">
+    <button variant="primary" onclick="submitProductForm()">Create</button>
+    <button onclick="document.getElementById('my-modal').hide()">Cancel</button>
+    </ui-title-bar>
+
+    <form id="productForm" style="padding: 20px;">
+    <label>
+        Product Title:<br>
+        <input type="text" id="productTitle" required>
+    </label>
+    <br><br>
+    <label>
+        Product Description:<br>
+        <textarea id="productDescription" rows="3"></textarea>
+    </label>
+    <br><br>
+    <label>
+        Price:<br>
+        <input type="number" id="productPrice" step="0.01" required>
+    </label>
+    <br><br>
+    <label>
+        SKU:<br>
+        <input type="text" id="productSKU">
+    </label>
+    </form>
+    </ui-modal>
+    <button onclick="shopify.modal.show('my-modal')">Create Product</button> -->
+    
+    
+    
+    
+    <!-- <form id="productForm" style="padding: 10px;">
+    <label>
+        Product Title:<br>
+        <input type="text" id="productTitle" required>
+    </label>
+    <br><br>
+    <label>
+        Product Description:<br>
+        <textarea id="productDescription" rows="3"></textarea>
+    </label>
+    <br><br>
+    <label>
+        Price:<br>
+        <input type="number" id="productPrice" step="0.01" required>
+    </label>
+    <br><br>
+    <label>
+        SKU:<br>
+        <input type="text" id="productSKU">
+    </label>
+    <br><br>
+    <button type="submit" id="submitBtn">Submit</button>
+    </form> -->
+    
+    
+
+
+    // Variants functionality
+    // const variantsContainer = document.getElementById('variantsContainer');
+    // const addVariantBtn = document.getElementById('addVariantBtn');
+    // addVariantBtn.addEventListener('click', () => {
+    //     const variantRow = document.createElement('div');
+    //     variantRow.className = 'variant-row';
+    //     variantRow.innerHTML = `
+    //         <div class="form-group">
+    //             <label>Variant Title</label>
+    //             <input type="text" class="variant-title" placeholder="e.g., Medium / Blue">
+    //         </div>
+    //         <div class="form-group">
+    //             <label>Price *</label>
+    //             <input type="number" class="variant-price" step="0.01" required>
+    //         </div>
+    //         <div class="form-group">
+    //             <label>SKU</label>
+    //             <input type="text" class="variant-sku">
+    //         </div>
+    //         <div class="form-group">
+    //             <label>Inventory</label>
+    //             <input type="number" class="variant-inventory" value="0">
+    //         </div>
+    //         <button type="button" class="remove-variant-btn" onclick="this.parentElement.remove()">X</button>
+    //     `;
+    //     variantsContainer.appendChild(variantRow);
+    // });
+
+
+    // Handle form submission
+    // $('#productForm').on('submit', function(e) {
+    //     e.preventDefault();
+
+    //     const title = $('#productTitle').val().trim();
+    //     const description = $('#productDescription').val().trim();
+    //     const price = $('#productPrice').val().trim();
+    //     const sku = $('#productSKU').val().trim();
+    //     const shop_url = "<?= $shopify->get_url() ?>";
+    //     const shop_token = "<?= $shopify->get_token() ?>";
+
+    //     if (!title || !price) {
+    //         alert('Title and Price are required!');
+    //         return;
+    //     }
+
+    //     // console.log('Form Data:', { title, description, price, sku });
+
+    //     // Example AJAX call to ajax.php
+    //     $.ajax({
+    //     url: 'ajax/createProduct.php',
+    //     type: 'POST',
+    //     data: { title, description, price, sku, shop_url, shop_token },
+    //     success: function(response) {
+    //         console.log('Server Response:', response);
+    //         alert('Product created successfully!');
+    //         console.log(response);
+    //         // $('#customModal').fadeOut();
+    //         // $('#productForm')[0].reset();
+    //     },
+    //     error: function(err) {
+    //         console.error('Error:', err);
+    //         alert('Something went wrong.');
+    //     }
+    //     });
+    // });
+
+
+
+    
+    */
 ?>
