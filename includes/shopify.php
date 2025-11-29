@@ -570,6 +570,59 @@
       return $response;
     }
 
+    private function updateProductWithDetails($productData, $shop_url, $access_token) {
+      $productId = $productData['product_id'];
+      $isSimpleProduct = empty($productData['options']) || 
+                         (count($productData['variants']) === 1 && 
+                          $productData['variants'][0]['option1'] === 'Default Title');
+      
+      // Update basic product info
+      $query = <<<GRAPHQL
+      mutation productUpdate(\$input: ProductInput!) {
+        productUpdate(input: \$input) {
+          product {
+            id
+            title
+          }
+          userErrors {
+            field
+            message
+          }
+        }
+      }
+      GRAPHQL;
+      
+      $variables = [
+          "input" => [
+              "id" => $productId,
+              "title" => $productData['title'],
+              "descriptionHtml" => $productData['description'],
+              "vendor" => $productData['vendor'],
+              "productType" => $productData['product_type'],
+              "tags" => $productData['tags'],
+              "status" => $productData['status']
+          ]
+      ];
+      
+      $response = $this->shopify_graphql_api($shop_url, $access_token, $query, $variables);
+      
+      $results = ['product_update' => $response, 'variants_updated' => []];
+      
+      // Update variants
+      foreach ($productData['variants'] as $variantData) {
+          if (isset($variantData['id'])) {
+              // Update existing variant
+              $variantId = preg_replace('/\D/', '', $variantData['id']);
+              $updateResponse = $this->updateVariantREST($variantId, $variantData, $shop_url, $access_token);
+              $results['variants_updated'][] = $updateResponse;
+          }
+      }
+      
+      // TODO: Handle new images, deleted variants, new options
+      
+      return ['success' => true] + $results;
+  }
+
 
 
 

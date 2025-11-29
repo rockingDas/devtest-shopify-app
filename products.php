@@ -127,6 +127,7 @@
             <button id="openModalBtn">Create Product</button>
 
             <div id="customModal" class="modal">
+                <input type="hidden" name="modal_status" id="modal_status">
                 <div class="modal-content">
                     <div class="modal-header">
                     Create New Product
@@ -357,7 +358,13 @@
                         <td><img width="100" height="100" alt="" src="<?= $images ?>"></td>
                         <td><?= $p['title'] ?></td>
                         <td><?= $p['status'] ?></td>
-                        <td><button class="secondary icon-trash"></button></td>
+                        <td>
+                            <button class="secondary icon-edit edit-product-btn" 
+                                    data-product-id="<?= $p['id'] ?>" 
+                                    data-product-gid="<?= $p['id'] ?>">
+                            </button>
+                            <button class="secondary icon-trash"></button>
+                        </td>
                     </tr>
                 <?php
                     }
@@ -759,22 +766,30 @@
 
 
 
-            // Open modal
+            // Reset when opening for create
             $('#openModalBtn').on('click', function() {
+                $('#modal_status').val("create");
+                isEditMode = false;
+                editProductId = null;
+                $('#productForm')[0].reset();
+                tags.length = 0;
+                images.length = 0;
+                $('#tagContainer .tag').remove();
+                $('#imagePreviewContainer').empty();
+                $('#variantsListContainer').hide();
+                $('#optionsSection').hide();
+                $('.modal-header').html('Create New Product <span class="close-btn remove-variant-btn" style="text-align: center;">&times;</span>');
+                $('.submit-btn').html('Create Product');
                 $('#customModal').fadeIn();
             });
 
-            // Close modal
-            $('.close-btn').on('click', function() {
+            // Close modal using event delegation
+            $(document).on('click', '.close-btn', function () {
+                $('#modal_status').val("");
                 $('#customModal').fadeOut();
             });
 
-
-
-            // Form submission
-            document.getElementById('productForm').addEventListener('submit', async (e) => {
-                e.preventDefault();
-
+            async function productCreate(){
                 // Show loader
                 const submitBtn = $(this).find('button[type="submit"]');
                 const originalText = submitBtn.html();
@@ -861,7 +876,294 @@
                 } finally {
                     submitBtn.html(originalText).prop('disabled', false);
                 }
+            }
+
+
+
+            // Form submission
+            document.getElementById('productForm').addEventListener('submit', async (e) => {
+                e.preventDefault();
+
+                let modal_status =  $('#modal_status').val();
+
+                if(modal_status === "create"){
+                    productCreate();
+                }else if(modal_status === "edit"){
+                    productEdit();
+                }
+
             });
+
+            /////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+            async function productEdit(){
+
+                const submitBtn = $(this).find('button[type="submit"]');
+                const originalText = submitBtn.html();
+                submitBtn.html('Processing... <span class="spinner-border spinner-border-sm"></span>').prop('disabled', true);
+                
+                // Collect data (same as before)
+                let variants = [];
+                
+                if ($('#hasVariants').is(':checked')) {
+                    $('#variantsTableBody tr').each(function() {
+                        const variantId = $(this).data('variant-id') || null; // Get existing variant ID
+                        const variantName = $(this).find('td:first').text();
+                        const options = variantName.split(' / ');
+                        const imageUrlInput = $(this).find('.variant-image-url').val() || '';
+                        const imageUrls = imageUrlInput ? imageUrlInput.split(',') : [];
+                        
+                        variants.push({
+                            id: variantId, // Include for updates
+                            title: variantName,
+                            price: $(this).find('.variant-price').val() || '0',
+                            sku: $(this).find('.variant-sku').val() || '',
+                            inventory_quantity: parseInt($(this).find('.variant-inventory').val()) || 0,
+                            image_url: imageUrls,
+                            option1: options[0] || null,
+                            option2: options[1] || null,
+                            option3: options[2] || null
+                        });
+                    });
+                } else {
+                    const variantId = isEditMode && product.variants ? product.variants[0].id : null;
+                    variants = [{
+                        id: variantId,
+                        title: 'Default Title',
+                        price: $('#basePrice').val(),
+                        sku: $('#baseSKU').val() || '',
+                        inventory_quantity: parseInt($('#baseInventory').val()) || 0,
+                        option1: 'Default Title'
+                    }];
+                }
+                
+                const publishChannels = Array.from(document.querySelectorAll('input[name="publish_channels[]"]:checked'))
+                    .map(cb => cb.value);
+                
+                const productData = {
+                    product_id: editProductId, // Add product ID for edit mode
+                    is_edit: isEditMode,
+                    title: document.getElementById('productTitle').value,
+                    description: document.getElementById('productDescription').value,
+                    vendor: document.getElementById('productVendor').value,
+                    product_type: document.getElementById('productType').value,
+                    category: document.getElementById('productCategory').value || null,
+                    tags: tags,
+                    images: images,
+                    options: options_new,
+                    variants: variants,
+                    status: document.getElementById('productStatus').value,
+                    publish_channels: publishChannels,
+                    shop_url: "<?= $shopify->get_url() ?>",
+                    shop_token: "<?= $shopify->get_token() ?>"
+                };
+                
+                console.log('Product Data:', productData);
+                
+                try {
+                    const endpoint = isEditMode ? 'ajax/updateProduct.php' : 'ajax/createProduct.php';
+                    const response = await fetch(endpoint, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(productData)
+                    });
+                    
+                    const result = await response.json();
+                    console.log('Result:', result);
+                    return;
+                    if (result.success) {
+                        alert(isEditMode ? 'Product updated successfully!' : 'Product created successfully!');
+                        location.reload();
+                    } else {
+                        alert('Error: ' + (result.error || 'Unknown error'));
+                    }
+                } catch (error) {
+                    console.error('Error:', error);
+                    alert('Error processing product');
+                } finally {
+                    submitBtn.html(originalText).prop('disabled', false);
+                }
+            }
+
+            let isEditMode = false;
+            let editProductId = null;
+
+            // Edit product click
+            $(document).on('click', '.edit-product-btn', async function() {
+                $('#modal_status').val("edit");
+                const productGid = $(this).data('product-gid');
+                isEditMode = true;
+                editProductId = productGid;
+                
+                // Show loading
+                $('#customModal').fadeIn();
+                $('.modal-header').html('Loading... <span class="close-btn remove-variant-btn" style="text-align: center;">&times;</span>');
+                
+                try {
+                    const response = await fetch('ajax/get-product.php', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            product_id: productGid,
+                            shop_url: "<?= $shopify->get_url() ?>",
+                            shop_token: "<?= $shopify->get_token() ?>"
+                        })
+                    });
+                    
+                    const result = await response.json();
+                    
+                    if (result.success) {
+                        console.log(result.product);
+                        populateProductForm(result.product);
+                        $('.modal-header').html('Edit Product <span class="close-btn remove-variant-btn" style="text-align: center;">&times;</span>');
+                    } else {
+                        alert('Failed to load product');
+                        $('#customModal').fadeOut();
+                    }
+                } catch (error) {
+                    console.error('Error:', error);
+                    alert('Error loading product');
+                    $('#customModal').fadeOut();
+                }
+            });
+
+            async function populateProductForm(product) {
+                // Reset form first
+                $('#productForm')[0].reset();
+                tags.length = 0;
+                images.length = 0;
+                $('#tagContainer .tag').remove();
+                $('#imagePreviewContainer').empty();
+                $('#variantsListContainer').hide();
+                $('#optionsSection').hide();
+                $('#hasVariants').prop('checked', false);
+                
+                // Basic info
+                $('#productTitle').val(product.title);
+                $('#productDescription').val(product.description);
+                $('#productVendor').val(product.vendor);
+                $('#productType').val(product.product_type);
+                $('#productStatus').val(product.status);
+                
+                // Tags
+                product.tags.forEach(tag => {
+                    tags.push(tag);
+                    addTagElement(tag);
+                });
+                
+                // Images
+                product.images.forEach(url => {
+                    images.push(url);
+                });
+                renderImages();
+                
+                // Check if simple or variant product
+                if (product.is_simple) {
+                    // Simple product
+                    const variant = product.variants[0];
+                    $('#basePrice').val(variant.price);
+                    $('#baseSKU').val(variant.sku);
+                    $('#baseInventory').val(variant.inventory_quantity);
+                } else {
+                    // Variant product
+                    $('#hasVariants').prop('checked', true);
+                    $('#optionsSection').show();
+                    
+                    // Populate options
+                    $('#optionsContainer').empty();
+                    optionCount = 0;
+                    
+                    product.options.forEach((option, index) => {
+                        if (option.name === 'Title') return; // Skip default title
+                        
+                        optionCount++;
+                        const optionHtml = `
+                            <div class="form-group mb-4 option-group" data-option="${optionCount}">
+                                <label class="form-label">Option ${optionCount} name</label>
+                                <input type="text" class="option-name form-control mb-2" value="${option.name}">
+                                <label class="form-label">Option values</label>
+                                <input type="text" class="option-values form-control" value="${option.values.join(', ')}">
+                                ${optionCount > 1 ? '<button type="button" class="btn btn-sm mt-2 remove-option-btn" style="background: #dc3545; color: white;">Remove</button>' : ''}
+                            </div>
+                        `;
+                        $('#optionsContainer').append(optionHtml);
+                    });
+                    
+                    // Set base values from first variant
+                    const firstVariant = product.variants[0];
+                    $('#basePrice').val(firstVariant.price);
+                    $('#baseSKU').val(firstVariant.sku.split('-')[0]); // Extract base SKU
+                    $('#baseInventory').val(firstVariant.inventory_quantity);
+                    
+                    // Generate and populate variants table
+                    options_new = product.options.filter(opt => opt.name !== 'Title');
+                    generateVariantsForEdit(product.variants);
+                }
+
+                // Fetch current publications for this product
+                try {
+                    const pubResponse = await fetch('ajax/get-product-publications.php', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            product_id: product.id,
+                            shop_url: "<?= $shopify->get_url() ?>",
+                            shop_token: "<?= $shopify->get_token() ?>"
+                        })
+                    });
+                    
+                    const pubResult = await pubResponse.json();
+                    if (pubResult.success) {
+                        pubResult.publication_ids.forEach(pubId => {
+                            $(`input[name="publish_channels[]"][value="${pubId}"]`).prop('checked', true);
+                        });
+                    }
+                } catch (error) {
+                    console.error('Failed to load product publications:', error);
+                }
+                
+                
+                // Update submit button
+                $('.submit-btn').html('Update Product');
+            }
+
+            function generateVariantsForEdit(existingVariants) {
+                const tbody = $('#variantsTableBody');
+                tbody.empty();
+                
+                existingVariants.forEach((variant, index) => {
+                    if (variant.title === 'Default Title') return;
+                    
+                    const row = `
+                        <tr style="border-bottom: 1px solid #e1e3e5;" data-variant-index="${index}" data-variant-id="${variant.id}">
+                            <td style="padding: 8px; font-weight: 500;">${variant.title}</td>
+                            <td style="padding: 8px;">
+                                <input type="number" class="form-control variant-price" step="0.01" value="${variant.price}" required>
+                            </td>
+                            <td style="padding: 8px;">
+                                <input type="text" class="form-control variant-sku" value="${variant.sku}">
+                            </td>
+                            <td style="padding: 8px;">
+                                <input type="number" class="form-control variant-inventory" value="${variant.inventory_quantity}">
+                            </td>
+                            <td style="padding: 8px;">
+                                <button type="button" class="btn btn-sm btn-secondary upload-variant-image" data-variant="${variant.title}">Upload Images</button>
+                                <div class="variant-images-preview" data-variant="${variant.title}" style="display: flex; gap: 4px; margin-top: 4px;">
+                                    ${variant.image_url.map(url => `
+                                        <div class="variant-img-thumb" style="width: 40px; height: 40px; border: 1px solid #ddd; border-radius: 4px; overflow: hidden;">
+                                            <img src="${url}" style="width: 100%; height: 100%; object-fit: cover;">
+                                        </div>
+                                    `).join('')}
+                                    <input type="hidden" class="variant-image-url" data-variant="${variant.title}" value="${variant.image_url.join(',')}">
+                                </div>
+                            </td>
+                        </tr>
+                    `;
+                    tbody.append(row);
+                });
+                
+                $('#variantsListContainer').show();
+            }
 
         });
     </script>
