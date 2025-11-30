@@ -660,9 +660,26 @@
                 }
 
                 options_new = options;
+
+                // ========== SAVE EXISTING VARIANT DATA ==========
+                const existingVariantData = {};
+                $('#variantsTableBody tr').each(function() {
+                    const variantName = $(this).find('td:first').text().trim();
+                    const variantId = $(this).data('variant-id') || null;
+                    
+                    existingVariantData[variantName] = {
+                        id: variantId,
+                        price: $(this).find('.variant-price').val(),
+                        sku: $(this).find('.variant-sku').val(),
+                        inventory: $(this).find('.variant-inventory').val(),
+                        images: $(this).find('.variant-image-url').val() || '',
+                        imagePreviewHtml: $(this).find('.variant-images-preview').html()
+                    };
+                });
+                // ========== END SAVE ==========
                 
                 const variants = generateCombinations(options);
-                renderVariantTable(variants, basePrice, baseSKU, baseInventory);
+                renderVariantTable(variants, basePrice, baseSKU, baseInventory, existingVariantData); // Pass saved data
                 $('#variantsListContainer').show();
             }
             
@@ -684,30 +701,43 @@
                 return result;
             }
             
-            function renderVariantTable(variants, basePrice, baseSKU, baseInventory) {
+            function renderVariantTable(variants, basePrice, baseSKU, baseInventory, existingData = {}) {
                 const tbody = $('#variantsTableBody');
                 tbody.empty();
                 
                 variants.forEach((variant, index) => {
                     const variantName = variant.join(' / ');
                     // Auto-generate SKU: BASE-OPTION1-OPTION2
-                    const autoSKU = baseSKU + '-' + variant.map(v => v.replace(/\s+/g, '-').toUpperCase()).join('-');
+                    //const autoSKU = baseSKU + '-' + variant.map(v => v.replace(/\s+/g, '-').toUpperCase()).join('-');
+
+                    // ========== CHECK IF VARIANT EXISTS ==========
+                    const existingVariant = existingData[variantName];
+                    const variantId = existingVariant ? existingVariant.id : null;
+                    const price = existingVariant ? existingVariant.price : basePrice;
+                    const sku = existingVariant ? existingVariant.sku : (baseSKU + '-' + variant.map(v => v.replace(/\s+/g, '-').toUpperCase()).join('-'));
+                    const inventory = existingVariant ? existingVariant.inventory : baseInventory;
+                    const imageValue = existingVariant ? existingVariant.images : '';
+                    const imagePreview = existingVariant ? existingVariant.imagePreviewHtml : '';
+                    // ========== END CHECK ==========
                     
                     const row = `
-                        <tr style="border-bottom: 1px solid #e1e3e5;" data-variant-index="${index}">
+                        <tr style="border-bottom: 1px solid #e1e3e5;" data-variant-index="${index}" data-variant-id="${variantId || ''}">
                             <td style="padding: 8px; font-weight: 500;">${variantName}</td>
                             <td style="padding: 8px;">
-                                <input type="number" class="form-control variant-price" step="0.01" value="${basePrice}" data-variant="${variantName}" required>
+                                <input type="number" class="form-control variant-price" step="0.01" value="${price}" data-variant="${variantName}" required>
                             </td>
                             <td style="padding: 8px;">
-                                <input type="text" class="form-control variant-sku" value="${autoSKU}" data-variant="${variantName}">
+                                <input type="text" class="form-control variant-sku" value="${sku}" data-variant="${variantName}">
                             </td>
                             <td style="padding: 8px;">
-                                <input type="number" class="form-control variant-inventory" value="${baseInventory}" data-variant="${variantName}">
+                                <input type="number" class="form-control variant-inventory" value="${inventory}" data-variant="${variantName}">
                             </td>
                             <td style="padding: 8px;">
                                 <button type="button" class="btn btn-sm btn-secondary upload-variant-image" data-variant="${variantName}">Upload Images</button>
-                                <div class="variant-images-preview" data-variant="${variantName}" style="display: flex; gap: 4px; margin-top: 4px;"></div>
+                                <div class="variant-images-preview" data-variant="${variantName}" style="display: flex; gap: 4px; margin-top: 4px;">
+                                    ${imagePreview}
+                                    ${imageValue ? `<input type="hidden" class="variant-image-url" data-variant="${variantName}" value="${imageValue}">` : ''}
+                                </div>
                             </td>
                         </tr>
                     `;
@@ -899,9 +929,10 @@
             async function productEdit(){
 
                 const submitBtn = $(this).find('button[type="submit"]');
+                console.log(submitBtn);
                 const originalText = submitBtn.html();
                 submitBtn.html('Processing... <span class="spinner-border spinner-border-sm"></span>').prop('disabled', true);
-                
+                return;
                 // Collect data (same as before)
                 let variants = [];
                 
@@ -926,7 +957,8 @@
                         });
                     });
                 } else {
-                    const variantId = isEditMode && product.variants ? product.variants[0].id : null;
+                    // const variantId = isEditMode && product.variants ? product.variants[0].id : null;
+                    const variantId = null;
                     variants = [{
                         id: variantId,
                         title: 'Default Title',
@@ -970,7 +1002,7 @@
                     
                     const result = await response.json();
                     console.log('Result:', result);
-                    return;
+                    // return;
                     if (result.success) {
                         alert(isEditMode ? 'Product updated successfully!' : 'Product created successfully!');
                         location.reload();
@@ -1131,37 +1163,30 @@
                 const tbody = $('#variantsTableBody');
                 tbody.empty();
                 
-                existingVariants.forEach((variant, index) => {
+                // Build existingData object from API response
+                const existingData = {};
+                existingVariants.forEach((variant) => {
                     if (variant.title === 'Default Title') return;
                     
-                    const row = `
-                        <tr style="border-bottom: 1px solid #e1e3e5;" data-variant-index="${index}" data-variant-id="${variant.id}">
-                            <td style="padding: 8px; font-weight: 500;">${variant.title}</td>
-                            <td style="padding: 8px;">
-                                <input type="number" class="form-control variant-price" step="0.01" value="${variant.price}" required>
-                            </td>
-                            <td style="padding: 8px;">
-                                <input type="text" class="form-control variant-sku" value="${variant.sku}">
-                            </td>
-                            <td style="padding: 8px;">
-                                <input type="number" class="form-control variant-inventory" value="${variant.inventory_quantity}">
-                            </td>
-                            <td style="padding: 8px;">
-                                <button type="button" class="btn btn-sm btn-secondary upload-variant-image" data-variant="${variant.title}">Upload Images</button>
-                                <div class="variant-images-preview" data-variant="${variant.title}" style="display: flex; gap: 4px; margin-top: 4px;">
-                                    ${variant.image_url.map(url => `
-                                        <div class="variant-img-thumb" style="width: 40px; height: 40px; border: 1px solid #ddd; border-radius: 4px; overflow: hidden;">
-                                            <img src="${url}" style="width: 100%; height: 100%; object-fit: cover;">
-                                        </div>
-                                    `).join('')}
-                                    <input type="hidden" class="variant-image-url" data-variant="${variant.title}" value="${variant.image_url.join(',')}">
-                                </div>
-                            </td>
-                        </tr>
-                    `;
-                    tbody.append(row);
+                    const imagePreviewHtml = variant.image_url.map(url => `
+                        <div class="variant-img-thumb" style="width: 40px; height: 40px; border: 1px solid #ddd; border-radius: 4px; overflow: hidden;">
+                            <img src="${url}" style="width: 100%; height: 100%; object-fit: cover;">
+                        </div>
+                    `).join('');
+                    
+                    existingData[variant.title] = {
+                        id: variant.id,
+                        price: variant.price,
+                        sku: variant.sku,
+                        inventory: variant.inventory_quantity,
+                        images: variant.image_url.join(','),
+                        imagePreviewHtml: imagePreviewHtml + (variant.image_url.length > 0 ? `<input type="hidden" class="variant-image-url" data-variant="${variant.title}" value="${variant.image_url.join(',')}">` : '')
+                    };
                 });
                 
+                // Use existing renderVariantTable function
+                const variants = existingVariants.map(v => v.title.split(' / '));
+                renderVariantTable(variants, '', '', '', existingData);
                 $('#variantsListContainer').show();
             }
 

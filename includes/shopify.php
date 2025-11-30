@@ -570,19 +570,39 @@
       return $response;
     }
 
-    private function updateProductWithDetails($productData, $shop_url, $access_token) {
+    public function updateProductWithDetails($productData, $shop_url, $access_token) {
       $productId = $productData['product_id'];
+      $productIdNumeric = preg_replace('/\D/', '', $productId);
+      
       $isSimpleProduct = empty($productData['options']) || 
                          (count($productData['variants']) === 1 && 
                           $productData['variants'][0]['option1'] === 'Default Title');
       
-      // Update basic product info
+      $results = [
+          'product_update' => null,
+          'options_update' => null,
+          'variants_updated' => [],
+          'variants_created' => [],
+          'variants_deleted' => [],
+          'images_updated' => [],
+          'publications_updated' => null
+      ];
+      
+      // Step 1: Update basic product info
       $query = <<<GRAPHQL
       mutation productUpdate(\$input: ProductInput!) {
         productUpdate(input: \$input) {
           product {
             id
             title
+            variants(first: 100) {
+              edges {
+                node {
+                  id
+                  title
+                }
+              }
+            }
           }
           userErrors {
             field
@@ -592,36 +612,200 @@
       }
       GRAPHQL;
       
-      $variables = [
-          "input" => [
-              "id" => $productId,
-              "title" => $productData['title'],
-              "descriptionHtml" => $productData['description'],
-              "vendor" => $productData['vendor'],
-              "productType" => $productData['product_type'],
-              "tags" => $productData['tags'],
-              "status" => $productData['status']
-          ]
-      ];
-      
-      $response = $this->shopify_graphql_api($shop_url, $access_token, $query, $variables);
-      
-      $results = ['product_update' => $response, 'variants_updated' => []];
-      
-      // Update variants
-      foreach ($productData['variants'] as $variantData) {
-          if (isset($variantData['id'])) {
-              // Update existing variant
-              $variantId = preg_replace('/\D/', '', $variantData['id']);
-              $updateResponse = $this->updateVariantREST($variantId, $variantData, $shop_url, $access_token);
-              $results['variants_updated'][] = $updateResponse;
+      // Prepare options for variant products
+      $productOptions = [];
+      if (!$isSimpleProduct && !empty($productData['options'])) {
+          foreach ($productData['options'] as $index => $option) {
+              $productOptions[] = [
+                  "name" => $option['name'],
+                  "position" => $index + 1,
+                  "values" => array_map(function($value) {
+                      return ["name" => $value];
+                  }, $option['values'])
+              ];
           }
       }
       
-      // TODO: Handle new images, deleted variants, new options
+      $variables = [
+        "input" => [
+          "id" => $productId,
+          "title" => $productData['title'],
+          "descriptionHtml" => $productData['description'],
+          "vendor" => $productData['vendor'],
+          "productType" => $productData['product_type'],
+          "tags" => $productData['tags'],
+          "status" => $productData['status'],
+          "productOptions" => $productOptions
+        ]
+      ];
+      
+      $response = $this->shopify_graphql_api($shop_url, $access_token, $query, $variables);
+      $results['product_update'] = $response;
+      
+      // Get current variants from response
+      $currentVariants = $response['data']['productUpdate']['product']['variants']['edges'] ?? [];
+      $currentVariantIds = array_map(function($edge) {
+          return $edge['node']['id'];
+      }, $currentVariants);
+      
+      // Step 2: Identify variants to delete (variants that existed but are not in new data)
+      $newVariantIds = array_filter(array_map(function($v) {
+          return $v['id'] ?? null;
+      }, $productData['variants']));
+      
+      $variantsToDelete = array_diff($currentVariantIds, $newVariantIds);
+      
+      // Step 3: Delete removed variants
+      foreach ($variantsToDelete as $variantIdToDelete) {
+        $variantIdNumeric = preg_replace('/\D/', '', $variantIdToDelete);
+        $deleteResponse = $this->rest_api(
+            "/admin/api/" . API_VERSION . "/variants/{$variantIdNumeric}.json",
+            null,
+            'DELETE',
+            $shop_url,
+            $access_token
+        );
+        $results['variants_deleted'][] = [
+            'id' => $variantIdToDelete,
+            'response' => $deleteResponse
+        ];
+      }
+
+      // ========== ADD THIS NEW SECTION ==========
+      // Step 3.5: Handle conversion from variant product → simple product
+      if ($isSimpleProduct && !empty($variantsToDelete)) {
+        // After deleting all variants, Shopify auto-creates a default variant
+        // Wait a moment for Shopify to create it
+        sleep(1);
+        
+        // Fetch the newly created default variant
+        $productResponse = $this->rest_api(
+            "/admin/api/" . API_VERSION . "/products/{$productIdNumeric}.json",
+            null,
+            'GET',
+            $shop_url,
+            $access_token
+        );
+        
+        if (!empty($productResponse['body']['product']['variants'])) {
+            $defaultVariant = $productResponse['body']['product']['variants'][0];
+            $defaultVariantId = $defaultVariant['id'];
+            
+            // Update the default variant with simple product data
+            $simpleVariantData = $productData['variants'][0];
+            $updateResponse = $this->updateVariantREST($defaultVariantId, $simpleVariantData, $shop_url, $access_token);
+            $results['variants_updated'][] = [
+                'type' => 'converted_to_simple',
+                'variant_id' => $defaultVariantId,
+                'response' => $updateResponse
+            ];
+            
+            // Skip Step 4 for simple products after conversion
+            // return ['success' => true] + $results;
+        }
+      } else {
+        // Step 4: Update existing variants and create new ones
+        foreach ($productData['variants'] as $variantData) {
+          if (isset($variantData['id']) && !empty($variantData['id'])) {
+              // Update existing variant
+              $variantIdNumeric = preg_replace('/\D/', '', $variantData['id']);
+              $updateResponse = $this->updateVariantREST($variantIdNumeric, $variantData, $shop_url, $access_token);
+              $results['variants_updated'][] = $updateResponse;
+              
+              // Update variant images
+              if (!empty($variantData['image_url']) && is_array($variantData['image_url'])) {
+                  $imgResponse = $this->uploadVariantImages($productIdNumeric, $variantIdNumeric, $variantData['image_url'], $shop_url, $access_token);
+                  $results['images_updated'][] = $imgResponse;
+              }
+          } else {
+              // Create new variant
+              if ($variantData['title'] === 'Default Title' || $variantData['option1'] === 'Default Title') {
+                  continue;
+              }
+              
+              $createResponse = $this->createVariantREST($productIdNumeric, $variantData, $shop_url, $access_token);
+              $results['variants_created'][] = $createResponse;
+              
+            if (isset($createResponse['body']['variant']['id'])) {
+                $newVariantId = $createResponse['body']['variant']['id'];
+                $inventoryItemId = $createResponse['body']['variant']['inventory_item_id'];
+                
+                // Update inventory
+                if ($variantData['inventory_quantity'] > 0) {
+                    $this->updateVariantInventory($inventoryItemId, $variantData['inventory_quantity'], $shop_url, $access_token);
+                }
+                
+                // Upload variant images
+                if (!empty($variantData['image_url']) && is_array($variantData['image_url'])) {
+                    $imgResponse = $this->uploadVariantImages($productIdNumeric, $newVariantId, $variantData['image_url'], $shop_url, $access_token);
+                    $results['images_updated'][] = $imgResponse;
+                }
+            }
+          }
+        }
+
+      }
+      
+      // Step 5: Update product images (main images, not variant-specific)
+      if (!empty($productData['images'])) {
+          $this->updateProductImages($productIdNumeric, $productData['images'], $shop_url, $access_token);
+      }
+      
+      // Step 6: Update publications
+      if (!empty($productData['publish_channels'])) {
+          $pubResponse = $this->publishToChannels($productId, $productData['publish_channels'], $shop_url, $access_token);
+          $results['publications_updated'] = $pubResponse;
+      }
       
       return ['success' => true] + $results;
-  }
+    }
+  
+    private function updateProductImages($productId, $imageUrls, $shop_url, $access_token) {
+        // Get current product images
+        $currentImages = $this->rest_api(
+            "/admin/api/" . API_VERSION . "/products/{$productId}/images.json",
+            null,
+            'GET',
+            $shop_url,
+            $access_token
+        );
+        
+        $currentImageUrls = array_map(function($img) {
+            return $img['src'];
+        }, $currentImages['body']['images'] ?? []);
+        
+        // Delete images that are no longer in the list (but keep variant images)
+        foreach ($currentImages['body']['images'] ?? [] as $image) {
+            if (!in_array($image['src'], $imageUrls) && empty($image['variant_ids'])) {
+                $this->rest_api(
+                    "/admin/api/" . API_VERSION . "/products/{$productId}/images/{$image['id']}.json",
+                    null,
+                    'DELETE',
+                    $shop_url,
+                    $access_token
+                );
+            }
+        }
+        
+        // Add new images
+        foreach ($imageUrls as $imageUrl) {
+            if (!in_array($imageUrl, $currentImageUrls)) {
+                $data = [
+                    "image" => [
+                        "src" => $imageUrl
+                    ]
+                ];
+                
+                $this->rest_api(
+                    "/admin/api/" . API_VERSION . "/products/{$productId}/images.json",
+                    $data,
+                    'POST',
+                    $shop_url,
+                    $access_token
+                );
+            }
+        }
+    }
 
 
 
