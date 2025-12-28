@@ -143,7 +143,7 @@
   
       $query = <<<GQL
       {
-        products($gs_selector: $limit, $cursorArg $queryFilter) {
+        products($gs_selector: $limit, $cursorArg $queryFilter, reverse: true) {
           edges {
             cursor
             node {
@@ -151,12 +151,28 @@
               title
               status
               createdAt
-              images(first: 1) {
+              totalInventory
+              category {
+                name
+              }
+              resourcePublications(first: 4) {
                 edges {
                   node {
-                    id
-                    url
-                    altText
+                    isPublished
+                  }
+                }
+              }
+              variantsCount {
+                count
+              }
+              media(first: 1) {
+                edges {
+                  node {
+                    ... on MediaImage {
+                      image {
+                        url
+                      }
+                    }
                   }
                 }
               }
@@ -177,22 +193,39 @@
 
     // $updateResponse = $this->updateVariantREST($variant_id, $price, $sku, $shop_url, $access_token);
     private function updateVariantREST($variantId, $variantData, $shop_url, $access_token) {
+
       // Step 1: Update variant (price, sku, enable inventory management)
       $data = [
         "variant" => [
             "id" => (int)$variantId,
             "price" => (string)$variantData['price'],
             "sku" => (string)$variantData['sku'],
-            "inventory_quantity" => (int)$variantData['inventory_quantity'],
-            "inventory_management" => "shopify"
+            "inventory_management" => "shopify",
+            "inventory_policy" => "deny"
         ]
       ];
-      $variantResponse = $this->rest_api( "/admin/api/".API_VERSION."/variants/{$variantId}.json", $data, 'PUT' , $shop_url, $access_token);
-
-
+      $variantResponse = $this->rest_api(
+        "/admin/api/".API_VERSION."/variants/{$variantId}.json", 
+        $data, 
+        'PUT', 
+        $shop_url, 
+        $access_token
+      );
 
       // Step 2: Update inventory quantity separately
       $inventoryItemId = $variantResponse['body']['variant']['inventory_item_id'];
+
+      if (isset($variantData['inventory_quantity']) && isset($inventoryItemId)) {
+        $inventory_levels = $this->updateInventoryGraphQL(
+            $inventoryItemId, 
+            $variantData['inventory_quantity'], 
+            $shop_url, 
+            $access_token
+        );
+      }
+
+      /*
+
 
       if (isset($variantData['inventory_quantity']) && isset($inventoryItemId)) {
         // Get location ID first
@@ -230,6 +263,66 @@
         'inventoryData' => $inventoryData,
         'inventory_levels' => $inventory_levels
       ];
+      */
+      return [
+        'success' => true,
+        'inventory_levels' => $inventory_levels
+      ];
+    }
+
+
+    private function updateInventoryGraphQL($inventoryItemId, $quantity, $shop_url, $access_token) {
+      // Get location ID
+      $locations = $this->rest_api(
+          "/admin/api/".API_VERSION."/locations.json",
+          null,
+          'GET',
+          $shop_url,
+          $access_token
+      );
+      
+      if (empty($locations['body']['locations'])) {
+          return ['success' => false, 'error' => 'No locations found'];
+      }
+      
+      $locationId = $locations['body']['locations'][0]['id'];
+      $locationGid = "gid://shopify/Location/{$locationId}";
+      $inventoryItemGid = "gid://shopify/InventoryItem/{$inventoryItemId}";
+      
+      $query = <<<GRAPHQL
+      mutation inventorySetQuantities(\$input: InventorySetQuantitiesInput!) {
+        inventorySetQuantities(input: \$input) {
+          inventoryAdjustmentGroup {
+            reason
+            changes {
+              name
+              delta
+            }
+          }
+          userErrors {
+            field
+            message
+          }
+        }
+      }
+      GRAPHQL;
+      
+      $variables = [
+        "input" => [
+          "reason" => "correction",
+          "name" => "available",
+          "ignoreCompareQuantity" => true,  // ← ADD THIS LINE
+          "quantities" => [
+            [
+              "inventoryItemId" => $inventoryItemGid,
+              "locationId" => $locationGid,
+              "quantity" => (int)$quantity
+            ]
+          ]
+        ]
+      ];
+      
+      return $this->shopify_graphql_api($shop_url, $access_token, $query, $variables);
     }
 
     public function createProductWithDetails($productData, $shop_url, $access_token) {
@@ -450,26 +543,62 @@
     }
 
     private function uploadVariantImages($productId, $variantId, $imageUrls, $shop_url, $access_token) {
+      // Get current product images
+      $currentImages = $this->rest_api(
+          "/admin/api/" . API_VERSION . "/products/{$productId}/images.json",
+          null,
+          'GET',
+          $shop_url,
+          $access_token
+      );
+      
+      // Find images currently attached to this variant
+      $variantImageIds = [];
+      $variantImageSrcs = [];
+      foreach ($currentImages['body']['images'] ?? [] as $image) {
+          if (in_array($variantId, $image['variant_ids'] ?? [])) {
+              $variantImageIds[] = $image['id'];
+              $variantImageSrcs[] = $image['src'];
+          }
+      }
+      
+      // Delete variant images that are no longer in the new list
+      foreach ($currentImages['body']['images'] ?? [] as $image) {
+          if (in_array($variantId, $image['variant_ids'] ?? []) && !in_array($image['src'], $imageUrls)) {
+              $this->rest_api(
+                  "/admin/api/" . API_VERSION . "/products/{$productId}/images/{$image['id']}.json",
+                  null,
+                  'DELETE',
+                  $shop_url,
+                  $access_token
+              );
+          }
+      }
+      
+      // Upload new variant images
       $responses = [];
       foreach ($imageUrls as $imageUrl) {
-        $data = [
-            "image" => [
-                "src" => $imageUrl,
-                "variant_ids" => [(int)$variantId]
-            ]
-        ];
-        
-        $imgResponse = $this->rest_api(
-            "/admin/api/" . API_VERSION . "/products/{$productId}/images.json",
-            $data,
-            'POST',
-            $shop_url,
-            $access_token
-        );
-        $responses[] = $imgResponse;
+          if (!in_array($imageUrl, $variantImageSrcs)) {
+              $data = [
+                  "image" => [
+                      "src" => $imageUrl,
+                      "variant_ids" => [(int)$variantId]
+                  ]
+              ];
+              
+              $imgResponse = $this->rest_api(
+                  "/admin/api/" . API_VERSION . "/products/{$productId}/images.json",
+                  $data,
+                  'POST',
+                  $shop_url,
+                  $access_token
+              );
+              $responses[] = $imgResponse;
+          }
       }
+      
       return ['responses' => $responses];
-    }
+  }
 
     private function createVariantREST($productId, $variantData, $shop_url, $access_token) {
       $data = [
@@ -538,36 +667,90 @@
     }
 
     private function publishToChannels($productId, $publicationIds, $shop_url, $access_token) {
-      if (empty($publicationIds)) return;
+      if (!is_array($publicationIds)) {
+          $publicationIds = [];
+      }
       
-      $query = <<<GRAPHQL
-      mutation publishablePublish(\$id: ID!, \$input: [PublicationInput!]!) {
-        publishablePublish(id: \$id, input: \$input) {
-          publishable {
-            availablePublicationsCount {
-              count
+      // Step 1: Get current publications for this product
+      $currentPubsQuery = <<<GRAPHQL
+      query getProduct(\$id: ID!) {
+        product(id: \$id) {
+          resourcePublicationsV2(first: 20) {
+            edges {
+              node {
+                publication {
+                  id
+                }
+              }
             }
-          }
-          userErrors {
-            field
-            message
           }
         }
       }
       GRAPHQL;
       
-      $input = array_map(function($pubId) {
-          return ["publicationId" => $pubId];
-      }, $publicationIds);
+      $currentPubs = $this->shopify_graphql_api($shop_url, $access_token, $currentPubsQuery, ["id" => $productId]);
       
-      $variables = [
-          "id" => $productId,
-          "input" => $input
-      ];
+      $currentPublicationIds = array_map(function($edge) {
+          return $edge['node']['publication']['id'];
+      }, $currentPubs['data']['product']['resourcePublicationsV2']['edges'] ?? []);
       
-      $response = $this->shopify_graphql_api($shop_url, $access_token, $query, $variables);
-
-      return $response;
+      // Step 2: Unpublish from ALL current publications
+      if (!empty($currentPublicationIds)) {
+          $unpublishQuery = <<<GRAPHQL
+          mutation publishableUnpublish(\$id: ID!, \$input: [PublicationInput!]!) {
+            publishableUnpublish(id: \$id, input: \$input) {
+              publishable {
+                availablePublicationsCount {
+                  count
+                }
+              }
+              userErrors {
+                field
+                message
+              }
+            }
+          }
+          GRAPHQL;
+          
+          $unpublishInput = array_map(function($pubId) {
+              return ["publicationId" => $pubId];
+          }, $currentPublicationIds);
+          
+          $this->shopify_graphql_api($shop_url, $access_token, $unpublishQuery, [
+              "id" => $productId,
+              "input" => $unpublishInput
+          ]);
+      }
+      
+      // Step 3: Publish to selected publications only
+      if (!empty($publicationIds)) {
+          $publishQuery = <<<GRAPHQL
+          mutation publishablePublish(\$id: ID!, \$input: [PublicationInput!]!) {
+            publishablePublish(id: \$id, input: \$input) {
+              publishable {
+                availablePublicationsCount {
+                  count
+                }
+              }
+              userErrors {
+                field
+                message
+              }
+            }
+          }
+          GRAPHQL;
+          
+          $publishInput = array_map(function($pubId) {
+              return ["publicationId" => $pubId];
+          }, $publicationIds);
+          
+          return $this->shopify_graphql_api($shop_url, $access_token, $publishQuery, [
+              "id" => $productId,
+              "input" => $publishInput
+          ]);
+      }
+      
+      return ['success' => true, 'message' => 'Unpublished from all channels'];
     }
 
     public function updateProductWithDetails($productData, $shop_url, $access_token) {
@@ -579,13 +762,12 @@
                           $productData['variants'][0]['option1'] === 'Default Title');
       
       $results = [
-          'product_update' => null,
-          'options_update' => null,
+          'product_update' => [],
           'variants_updated' => [],
           'variants_created' => [],
+          'default_variants_deleted' => [],
           'variants_deleted' => [],
-          'images_updated' => [],
-          'publications_updated' => null
+          'publications_updated' => []
       ];
       
       // Step 1: Update basic product info
@@ -634,14 +816,23 @@
           "vendor" => $productData['vendor'],
           "productType" => $productData['product_type'],
           "tags" => $productData['tags'],
-          "status" => $productData['status'],
-          "productOptions" => $productOptions
+          "status" => $productData['status']
         ]
       ];
       
       $response = $this->shopify_graphql_api($shop_url, $access_token, $query, $variables);
       $results['product_update'] = $response;
-      
+
+      // ========== ADD THIS DEBUG ==========
+      if (isset($response['errors']) || !empty($response['data']['productUpdate']['userErrors'])) {
+        error_log("GraphQL Update Error: " . json_encode($response));
+        return [
+            'success' => false, 
+            'error' => $response['errors'] ?? $response['data']['productUpdate']['userErrors']
+        ];
+      }
+      // ========== END DEBUG ==========
+
       // Get current variants from response
       $currentVariants = $response['data']['productUpdate']['product']['variants']['edges'] ?? [];
       $currentVariantIds = array_map(function($edge) {
@@ -650,9 +841,17 @@
       
       // Step 2: Identify variants to delete (variants that existed but are not in new data)
       $newVariantIds = array_filter(array_map(function($v) {
-          return $v['id'] ?? null;
+        return $v['id'] ?? null;
       }, $productData['variants']));
-      
+
+      // Get current variant IDs, excluding "Default Title" (already deleted in Step 1.5)
+      // $currentVariantIds = [];
+      // foreach ($response['data']['productUpdate']['product']['variants']['edges'] ?? [] as $edge) {
+      //   if ($edge['node']['title'] !== 'Default Title') {
+      //       $currentVariantIds[] = $edge['node']['id'];
+      //   }
+      // }
+
       $variantsToDelete = array_diff($currentVariantIds, $newVariantIds);
       
       // Step 3: Delete removed variants
@@ -665,11 +864,21 @@
             $shop_url,
             $access_token
         );
-        $results['variants_deleted'][] = [
+        $results['variants_deleted'] = [
             'id' => $variantIdToDelete,
             'response' => $deleteResponse
         ];
       }
+
+      // ========== ADD THIS DEBUG ==========
+      if (isset($deleteResponse['errors']) || isset($deleteResponse['error'])) {
+        error_log("GraphQL Update Error: " . json_encode($deleteResponse));
+        return [
+            'success' => false, 
+            'error' => $deleteResponse['errors']
+        ];
+      }
+      // ========== END DEBUG ==========
 
       // ========== ADD THIS NEW SECTION ==========
       // Step 3.5: Handle conversion from variant product → simple product
@@ -686,6 +895,16 @@
             $shop_url,
             $access_token
         );
+
+        // ========== ADD THIS DEBUG ==========
+        if (isset($productResponse['errors']) || isset($productResponse['error'])) {
+          error_log("GraphQL Update Error: " . json_encode($productResponse));
+          return [
+              'success' => false, 
+              'error' => $productResponse['errors']
+          ];
+        }
+        // ========== END DEBUG ==========
         
         if (!empty($productResponse['body']['product']['variants'])) {
             $defaultVariant = $productResponse['body']['product']['variants'][0];
@@ -694,7 +913,7 @@
             // Update the default variant with simple product data
             $simpleVariantData = $productData['variants'][0];
             $updateResponse = $this->updateVariantREST($defaultVariantId, $simpleVariantData, $shop_url, $access_token);
-            $results['variants_updated'][] = [
+            $results['variants_updated'] = [
                 'type' => 'converted_to_simple',
                 'variant_id' => $defaultVariantId,
                 'response' => $updateResponse
@@ -710,12 +929,12 @@
               // Update existing variant
               $variantIdNumeric = preg_replace('/\D/', '', $variantData['id']);
               $updateResponse = $this->updateVariantREST($variantIdNumeric, $variantData, $shop_url, $access_token);
-              $results['variants_updated'][] = $updateResponse;
+              $results['variants_updated'] = $updateResponse;
               
               // Update variant images
               if (!empty($variantData['image_url']) && is_array($variantData['image_url'])) {
                   $imgResponse = $this->uploadVariantImages($productIdNumeric, $variantIdNumeric, $variantData['image_url'], $shop_url, $access_token);
-                  $results['images_updated'][] = $imgResponse;
+                  $results['images_updated'] = $imgResponse;
               }
           } else {
               // Create new variant
@@ -724,7 +943,7 @@
               }
               
               $createResponse = $this->createVariantREST($productIdNumeric, $variantData, $shop_url, $access_token);
-              $results['variants_created'][] = $createResponse;
+              $results['variants_created'] = $createResponse;
               
             if (isset($createResponse['body']['variant']['id'])) {
                 $newVariantId = $createResponse['body']['variant']['id'];
@@ -738,13 +957,45 @@
                 // Upload variant images
                 if (!empty($variantData['image_url']) && is_array($variantData['image_url'])) {
                     $imgResponse = $this->uploadVariantImages($productIdNumeric, $newVariantId, $variantData['image_url'], $shop_url, $access_token);
-                    $results['images_updated'][] = $imgResponse;
+                    $results['images_updated'] = $imgResponse;
                 }
             }
           }
         }
 
       }
+
+      
+      // ========== ADD THIS NEW SECTION ==========
+      // Step 4.5: When converting simple → variant, delete the "Default Title" variant
+      if (!$isSimpleProduct && !empty($productOptions)) {
+        // Check if there's a "Default Title" variant in current variants
+        
+        foreach ($currentVariants as $edge) {
+          if ($edge['node']['title'] === 'Default Title') {
+            $defaultVariantId = preg_replace('/\D/', '', $edge['node']['id']);
+            
+            $default_variants_deleted = $this->rest_api(
+                "/admin/api/" . API_VERSION . "/variants/{$defaultVariantId}.json",
+                null,
+                'DELETE',
+                $shop_url,
+                $access_token
+            );
+            
+            $results['default_variants_deleted'][] = [
+                'type' => 'default_variant_removed',
+                'id' => $edge['node']['id'],
+                'response' => $default_variants_deleted
+            ];
+            
+            break; // Only one default variant exists
+          }
+        }
+      }
+      // ========== END NEW SECTION ==========
+      
+
       
       // Step 5: Update product images (main images, not variant-specific)
       if (!empty($productData['images'])) {
@@ -756,6 +1007,15 @@
           $pubResponse = $this->publishToChannels($productId, $productData['publish_channels'], $shop_url, $access_token);
           $results['publications_updated'] = $pubResponse;
       }
+      // ========== ADD THIS DEBUG ==========
+      if (isset($pubResponse['errors']) || isset($pubResponse['error'])) {
+        error_log("GraphQL Update Error: " . json_encode($pubResponse));
+        return [
+            'success' => false, 
+            'error' => $pubResponse['errors']
+        ];
+      }
+      // ========== END DEBUG ==========
       
       return ['success' => true] + $results;
     }
@@ -809,7 +1069,40 @@
 
 
 
-
+    public function deleteProduct($productId, $shop_url, $access_token) {
+      $query = <<<GRAPHQL
+      mutation productDelete(\$input: ProductDeleteInput!) {
+        productDelete(input: \$input) {
+          deletedProductId
+          userErrors {
+            field
+            message
+          }
+        }
+      }
+      GRAPHQL;
+      
+      $variables = [
+          "input" => [
+              "id" => $productId
+          ]
+      ];
+      
+      $response = $this->shopify_graphql_api($shop_url, $access_token, $query, $variables);
+      
+      // Check for errors
+      if (isset($response['errors']) || !empty($response['data']['productDelete']['userErrors'])) {
+          return [
+              'success' => false,
+              'error' => $response['errors'] ?? $response['data']['productDelete']['userErrors']
+          ];
+      }
+      
+      return [
+          'success' => true,
+          'deleted_id' => $response['data']['productDelete']['deletedProductId']
+      ];
+    }
 
 
 

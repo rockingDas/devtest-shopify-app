@@ -22,7 +22,7 @@ include_once("includes/header.php");
     <h1>🎉 Welcome back to DevTest App</h1>
     <p>Shop: <strong><?php echo htmlspecialchars($shop); ?></strong></p>
     <p>Your app is installed and ready ✅</p>
-    <button id="open-picker">Open resource picker</button>
+    <!-- <button id="open-picker">Open resource picker</button> -->
   </div>
 
   <script>

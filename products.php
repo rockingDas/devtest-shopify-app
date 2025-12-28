@@ -119,6 +119,35 @@
     .remove-variant-btn { background: #d72c0d;color: white;border: none;width: 30px;height: 30px;border-radius: 4px;cursor: pointer;font-size: 18px;border-radius: 50px;margin-bottom: 60px;padding: 0;min-height: 0;min-width: 0; }
     .input-hint { font-size: 12px; color: #6d7175; margin-top: 4px; }
     .two-column { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+    td.product_details {
+        max-width: 150px;
+        padding: 0;
+    }
+
+    td.product_status {
+        width: 50px;
+    }
+
+    td.product_inventory {
+        width: 200px;
+    }
+
+    td.product_category {
+        width: 200px;
+    }
+
+    .pagination {
+        margin-bottom: 2rem;
+    }
+
+    div#variantsListContainer {
+        margin: 2.5rem 0;
+    }
+
+    div#optionsSection {
+        margin-bottom: 2.5rem;
+    }
+    
 </style>
 
     <section>
@@ -298,7 +327,7 @@
                         </div>
 
                         <!-- Submit -->
-                        <button type="submit" class="submit-btn">Create Product</button>
+                        <button type="submit" class="submit-btn" id="modal_submit_btn">Create Product</button>
                     </form>
 
                 </div>
@@ -340,11 +369,14 @@
     </section>
 
     <section>
-        <table>
+        <table class="product_list_table">
             <thead>
                 <tr>
                 <th colspan="2">Product</th>
                 <th>Status</th>
+                <th>Inventory</th>
+                <th>Category</th>
+                <th>Channels</th>
                 <th>Action</th>
                 </tr>
             </thead>
@@ -352,18 +384,29 @@
                 <?php
                     foreach( $edges as $edge ){
                     $p = $edge['node'];
-                    $images = count($p['images']) > 0 ? $p['images']['edges'][0]['node']['url'] : "";
+                    // print_r($p);
+                    // $images = count($p['images']) > 0 ? $p['images']['edges'][0]['node']['url'] : "";
+                    $images = $p['media']['edges'][0]['node']['image']['url'] ?? '';
                 ?>
                     <tr>
-                        <td><img width="100" height="100" alt="" src="<?= $images ?>"></td>
-                        <td><?= $p['title'] ?></td>
-                        <td><?= $p['status'] ?></td>
+                        <td class="product_image"><img width="75" height="75" alt="" src="<?= $images ?>"></td>
+                        <td class="product_details"><?= $p['title'] ?></td>
+                        <td class="product_status"><span class="tag <?= ($p['status'] == 'ACTIVE') ? "green":"grey"; ?>"><?= ucfirst(strtolower($p['status'] ?? '')); ?></span></td>
+                        <td class="product_inventory">
+                            <span class='<?= ($p["totalInventory"] < 10) ? "red":""; ?>'><?= $p['totalInventory'] ?> in stock 
+                                <?php if( $p['variantsCount']['count'] > 1 ){ ?>
+                                for <?= $p['variantsCount']['count'] ?> variants
+                                <?php } ?>
+                            </span>
+                        </td>
+                        <td class="product_category"><?= (isset($p['category']['name']) && !empty($p['category']['name'])) ? $p['category']['name'] : ""; ?></td>
+                        <td><?= count($p['resourcePublications']['edges']) ?></td>
                         <td>
                             <button class="secondary icon-edit edit-product-btn" 
                                     data-product-id="<?= $p['id'] ?>" 
                                     data-product-gid="<?= $p['id'] ?>">
                             </button>
-                            <button class="secondary icon-trash"></button>
+                            <button class="secondary icon-trash" data-product-id="<?= $p['id'] ?>" data-product-gid="<?= $p['id'] ?>"></button>
                         </td>
                     </tr>
                 <?php
@@ -821,7 +864,7 @@
 
             async function productCreate(){
                 // Show loader
-                const submitBtn = $(this).find('button[type="submit"]');
+                const submitBtn = $('#modal_submit_btn');
                 const originalText = submitBtn.html();
                 submitBtn.html('Creating... <span class="spinner-border spinner-border-sm"></span>').prop('disabled', true);
                 
@@ -899,7 +942,9 @@
                     
                     const result = await response.json();
                     console.log('Result:', result);
-                    alert('Product created successfully!');
+                    // alert('Product created successfully!');
+                    $('.close-btn').trigger('click');
+                    // location.reload();
                 } catch (error) {
                     console.error('Error:', error);
                     alert('Error creating product');
@@ -913,6 +958,87 @@
             // Form submission
             document.getElementById('productForm').addEventListener('submit', async (e) => {
                 e.preventDefault();
+
+                // ========== ADD VALIDATION ==========
+                if ($('#hasVariants').is(':checked')) {
+                    // Validate variant products
+                    let hasError = false;
+                    $('#variantsTableBody tr').each(function() {
+                        const price = $(this).find('.variant-price').val();
+                        const sku = $(this).find('.variant-sku').val();
+
+                        $(this).find('.variant-price').css('border-color', '#c5cdd5');
+                        $(this).find('.variant-sku').css('border-color', '#c5cdd5');
+
+                        if (!price || parseFloat(price) <= 0) {
+                            // alert('Please enter a valid price for all variants');
+                            $(this).find('.variant-price').css('border-color', 'red');
+                            hasError = true;
+                            // return false;
+                        }
+                        if (!sku) {
+                            // alert('Please enter a SKU for all variants');
+                            $(this).find('.variant-sku').css('border-color', 'red');
+                            hasError = true;
+                            // return false;
+                        }
+                    });
+
+                    const price = $('#basePrice').val();
+                    $('#basePrice').css('border-color', '#c5cdd5');
+                    if (!price || parseFloat(price) <= 0) {
+                        // alert('Please enter a valid Base price');
+                        $('#basePrice').css('border-color', 'red');
+                        hasError = true;
+                    }
+                    // Validate simple product
+                    const sku = $('#baseSKU').val();
+                    $('#baseSKU').css('border-color', '#c5cdd5');
+                    if (!sku) {
+                        // alert('Please enter a valid Base SKU');
+                        hasError = true;
+                        $('#baseSKU').css('border-color', 'red');
+                    }
+                    
+                    if (hasError) {
+                        return;
+                    }
+                } else {
+                    let hasError = false;
+                    // Validate simple product
+                    const price = $('#basePrice').val();
+                    $('#basePrice').css('border-color', '#c5cdd5');
+                    if (!price || parseFloat(price) <= 0) {
+                        // alert('Please enter a valid Base price');
+                        $('#basePrice').css('border-color', 'red');
+                        hasError = true;
+                        // return;
+                    }
+                    // Validate simple product
+                    const sku = $('#baseSKU').val();
+                    $('#baseSKU').css('border-color', '#c5cdd5');
+                    if (!sku) {
+                        // alert('Please enter a valid Base SKU');
+                        $('#baseSKU').css('border-color', 'red');
+                        hasError = true;
+                        // return;
+                    }
+                    if (hasError) {
+                        return;
+                    }
+                }
+
+                $('#imageUploadArea').css('border-color', '#c5cdd5');
+                $('#imageUrlInput').css('border-color', '#c5cdd5');
+                // Validate: at least one image required for simple products
+                if (!$('#hasVariants').is(':checked') && images.length === 0) {
+                    $('#imageUploadArea').css('border-color', 'red');
+                    $('#imageUrlInput').css('border-color', 'red');
+                    alert('Please add at least one product image');
+                    return;
+                }
+
+                // ========== END VALIDATION ==========
 
                 let modal_status =  $('#modal_status').val();
 
@@ -928,11 +1054,12 @@
 
             async function productEdit(){
 
-                const submitBtn = $(this).find('button[type="submit"]');
+                // const submitBtn = $(this).find('button[type="submit"]');
+                const submitBtn = $('#modal_submit_btn');
                 console.log(submitBtn);
                 const originalText = submitBtn.html();
                 submitBtn.html('Processing... <span class="spinner-border spinner-border-sm"></span>').prop('disabled', true);
-                return;
+                // return;
                 // Collect data (same as before)
                 let variants = [];
                 
@@ -991,6 +1118,13 @@
                 };
                 
                 console.log('Product Data:', productData);
+
+                // Validate: at least one image required for simple products
+                if (!$('#hasVariants').is(':checked') && images.length === 0) {
+                    alert('Please add at least one product image');
+                    submitBtn.html(originalText).prop('disabled', false);
+                    return;
+                }
                 
                 try {
                     const endpoint = isEditMode ? 'ajax/updateProduct.php' : 'ajax/createProduct.php';
@@ -1004,8 +1138,9 @@
                     console.log('Result:', result);
                     // return;
                     if (result.success) {
-                        alert(isEditMode ? 'Product updated successfully!' : 'Product created successfully!');
-                        location.reload();
+                        // alert(isEditMode ? 'Product updated successfully!' : 'Product created successfully!');
+                        $('.close-btn').trigger('click');
+                        // location.reload();
                     } else {
                         alert('Error: ' + (result.error || 'Unknown error'));
                     }
@@ -1123,9 +1258,9 @@
                     
                     // Set base values from first variant
                     const firstVariant = product.variants[0];
-                    $('#basePrice').val(firstVariant.price);
-                    $('#baseSKU').val(firstVariant.sku.split('-')[0]); // Extract base SKU
-                    $('#baseInventory').val(firstVariant.inventory_quantity);
+                    $('#basePrice').val(firstVariant.price || '0.00');
+                    $('#baseSKU').val(firstVariant.sku ? firstVariant.sku.split('-')[0] : '');
+                    $('#baseInventory').val(firstVariant.inventory_quantity || 0);
                     
                     // Generate and populate variants table
                     options_new = product.options.filter(opt => opt.name !== 'Title');
@@ -1176,9 +1311,9 @@
                     
                     existingData[variant.title] = {
                         id: variant.id,
-                        price: variant.price,
-                        sku: variant.sku,
-                        inventory: variant.inventory_quantity,
+                        price: variant.price || '0.00',  // ← ADD DEFAULT
+                        sku: variant.sku || '',           // ← ADD DEFAULT
+                        inventory: variant.inventory_quantity || 0,  // ← ADD DEFAULT
                         images: variant.image_url.join(','),
                         imagePreviewHtml: imagePreviewHtml + (variant.image_url.length > 0 ? `<input type="hidden" class="variant-image-url" data-variant="${variant.title}" value="${variant.image_url.join(',')}">` : '')
                     };
@@ -1189,6 +1324,52 @@
                 renderVariantTable(variants, '', '', '', existingData);
                 $('#variantsListContainer').show();
             }
+
+            // Delete product
+            $(document).on('click', '.icon-trash', async function() {
+                const productRow = $(this).closest('tr');
+                const productTitle = productRow.find('td:eq(1)').text();
+                const productId = productRow.find('.secondary.icon-trash').data('product-gid');
+                console.log(productRow);
+                // Confirmation dialog
+                if (!confirm(`Are you sure you want to delete "${productTitle}"?\n\nThis will permanently delete the product and all its variants, images, and inventory data.`)) {
+                    return;
+                }
+                
+                // Show deleting state
+                // $(this).prop('disabled', true).text('Deleting...');
+                
+                try {
+                    const response = await fetch('ajax/deleteProduct.php', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            product_id: productId,
+                            shop_url: "<?= $shopify->get_url() ?>",
+                            shop_token: "<?= $shopify->get_token() ?>"
+                        })
+                    });
+                    
+                    const result = await response.json();
+                    console.log(result);
+                    // return;
+                    if (result.success) {
+                        // Remove row with animation
+                        productRow.fadeOut(300, function() {
+                            productRow.remove();
+                        });
+                        location.reload();
+                        // alert('Product deleted successfully!');
+                    } else {
+                        alert('Error: ' + (result.error || 'Failed to delete product'));
+                        // $(this).prop('disabled', false).text('');
+                    }
+                } catch (error) {
+                    console.error('Delete error:', error);
+                    alert('Error deleting product');
+                    // $(this).prop('disabled', false).text('');
+                }
+            });
 
         });
     </script>
